@@ -1,7 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { QrCode, MapPin, Clock, RefreshCw } from 'lucide-react';
-import { generateQRCode, validateQRCode } from '../../utils/qrUtils';
-import { storage } from '../../utils/storage';
 import { QRCode as QRCodeType } from '../../types';
 
 export const QRCodeGenerator: React.FC = () => {
@@ -16,36 +14,47 @@ export const QRCodeGenerator: React.FC = () => {
   const [generating, setGenerating] = useState(false);
   const [timeLeft, setTimeLeft] = useState(0);
 
+  // Countdown timer
   useEffect(() => {
+    if (!activeQR) return;
+
     const interval = setInterval(() => {
-      if (activeQR && validateQRCode(activeQR)) {
-        const now = new Date().getTime();
-        const expiresAt = new Date(activeQR.expiresAt).getTime();
-        setTimeLeft(Math.max(0, expiresAt - now));
-      } else {
-        setTimeLeft(0);
-        if (activeQR) {
-          setActiveQR(null);
-        }
+      const now = Date.now();
+      const expiresAt = new Date(activeQR.expiresAt).getTime();
+      const remaining = expiresAt - now;
+
+      setTimeLeft(Math.max(0, remaining));
+
+      if (remaining <= 0) {
+        setActiveQR(null);
+        clearInterval(interval);
       }
-    }, 1000);
+    }, 6000000);
 
     return () => clearInterval(interval);
   }, [activeQR]);
 
+  // Generate new QR
   const handleGenerateQR = async () => {
     setGenerating(true);
     try {
       const qrLocation = useLocation ? location : undefined;
-      const newQR = await generateQRCode(sessionType, qrLocation);
-      
-      // Save to storage
-      const qrCodes = storage.getQRCodes();
-      // Deactivate previous QR codes
-      const updatedQRCodes = qrCodes.map(qr => ({ ...qr, isActive: false }));
-      updatedQRCodes.push(newQR);
-      storage.setQRCodes(updatedQRCodes);
-      
+
+      // Unique ID to ensure each QR is unique
+      const uniqueId = Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+
+      const res = await fetch('http://localhost:5000/api/qrcode/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionType, location: qrLocation, uniqueId }),
+      });
+
+      if (!res.ok) throw new Error('Failed to generate QR code');
+      const newQR: QRCodeType = await res.json();
+
+      // Ensure correct date format
+      newQR.expiresAt = new Date(newQR.expiresAt).toISOString();
+
       setActiveQR(newQR);
     } catch (error) {
       console.error('Failed to generate QR code:', error);
@@ -64,9 +73,7 @@ export const QRCodeGenerator: React.FC = () => {
             radius: 100,
           });
         },
-        (error) => {
-          console.error('Geolocation error:', error);
-        }
+        (error) => console.error('Geolocation error:', error)
       );
     }
   };
@@ -87,15 +94,11 @@ export const QRCodeGenerator: React.FC = () => {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* QR Generation Controls */}
         <div className="rounded-lg p-6 space-y-6 glass">
           <h3 className="text-lg font-semibold text-foreground">Generation Settings</h3>
-          
-          {/* Session Type */}
+
           <div>
-            <label className="block text-sm font-medium text-foreground mb-2">
-              Session Type
-            </label>
+            <label className="block text-sm font-medium text-foreground mb-2">Session Type</label>
             <div className="flex rounded-lg border overflow-hidden">
               <button
                 onClick={() => setSessionType('check-in')}
@@ -120,12 +123,9 @@ export const QRCodeGenerator: React.FC = () => {
             </div>
           </div>
 
-          {/* Location Settings */}
           <div>
             <div className="flex items-center justify-between mb-2">
-              <label className="block text-sm font-medium text-foreground">
-                Location Restriction
-              </label>
+              <label className="block text-sm font-medium text-foreground">Location Restriction</label>
               <label className="relative inline-flex items-center cursor-pointer">
                 <input
                   type="checkbox"
@@ -136,7 +136,7 @@ export const QRCodeGenerator: React.FC = () => {
                 <div className="w-11 h-6 bg-muted peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary/30 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-background after:border after:border-border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
               </label>
             </div>
-            
+
             {useLocation && (
               <div className="space-y-3">
                 <div className="grid grid-cols-2 gap-3">
@@ -186,37 +186,26 @@ export const QRCodeGenerator: React.FC = () => {
             disabled={generating}
             className="w-full flex items-center justify-center space-x-2 px-4 py-3 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 focus:ring-4 focus:ring-primary/20 transition-colors disabled:opacity-50"
           >
-            {generating ? (
-              <RefreshCw className="h-5 w-5 animate-spin" />
-            ) : (
-              <QrCode className="h-5 w-5" />
-            )}
+            {generating ? <RefreshCw className="h-5 w-5 animate-spin" /> : <QrCode className="h-5 w-5" />}
             <span>{generating ? 'Generating...' : 'Generate New QR Code'}</span>
           </button>
         </div>
 
-        {/* QR Display */}
         <div className="rounded-lg p-6 text-center space-y-4 glass">
           {activeQR ? (
             <>
               <div className="flex items-center justify-between">
-                <h3 className="text-lg font-semibold text-foreground">
-                  Active QR Code
-                </h3>
+                <h3 className="text-lg font-semibold text-foreground">Active QR Code</h3>
                 <div className="flex items-center space-x-2 text-sm text-muted-foreground">
                   <Clock className="h-4 w-4" />
                   <span>{formatTime(timeLeft)}</span>
                 </div>
               </div>
-              
+
               <div className="bg-background p-4 rounded-lg">
-                <img
-                  src={activeQR.code}
-                  alt="QR Code"
-                  className="mx-auto w-64 h-64"
-                />
+                <img src={activeQR.code} alt="QR Code" className="mx-auto w-64 h-64" />
               </div>
-              
+
               <div className="text-sm space-y-2">
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Type:</span>
@@ -224,15 +213,11 @@ export const QRCodeGenerator: React.FC = () => {
                 </div>
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Generated:</span>
-                  <span className="font-medium">
-                    {new Date(activeQR.generatedAt).toLocaleTimeString()}
-                  </span>
+                  <span className="font-medium">{new Date(activeQR.generatedAt).toLocaleTimeString()}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Expires:</span>
-                  <span className="font-medium">
-                    {new Date(activeQR.expiresAt).toLocaleTimeString()}
-                  </span>
+                  <span className="font-medium">{new Date(activeQR.expiresAt).toLocaleTimeString()}</span>
                 </div>
                 {activeQR.location && (
                   <div className="flex justify-between">
@@ -243,12 +228,10 @@ export const QRCodeGenerator: React.FC = () => {
                   </div>
                 )}
               </div>
-              
-              {timeLeft <= 300000 && ( // 5 minutes warning
+
+              {timeLeft <= 600000 && (
                 <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
-                  <p className="text-sm text-yellow-800">
-                    ⚠️ QR Code expires in {formatTime(timeLeft)}
-                  </p>
+                  <p className="text-sm text-yellow-800">⚠️ QR Code expires in {formatTime(timeLeft)}</p>
                 </div>
               )}
             </>
@@ -264,3 +247,4 @@ export const QRCodeGenerator: React.FC = () => {
     </div>
   );
 };
+           
